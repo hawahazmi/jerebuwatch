@@ -1,0 +1,14 @@
+# Personal progress tracker — private, not for the repo
+TRACKER.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env

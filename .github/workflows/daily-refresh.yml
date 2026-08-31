@@ -1,0 +1,35 @@
+name: Daily air quality refresh
+
+on:
+  schedule:
+    # 06:00 MYT = 22:00 UTC (previous day)
+    - cron: "0 22 * * *"
+  workflow_dispatch: {}   # manual trigger for testing
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch air quality data
+        run: python scripts/fetch_air_quality.py
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name "JerebuWatch Bot"
+          git config user.email "jerebuwatch-bot@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "No data changes."
+          else
+            git commit -m "data: daily air quality refresh $(date -u +%Y-%m-%d)"
+            git push
+          fi

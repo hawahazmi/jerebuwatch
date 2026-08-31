@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JerebuWatch — Malaysia Air Quality</title>
+<style>
+  :root { --bg:#14161c; --card:#1e222b; --text:#e8e8ec; --muted:#9aa0ab; --accent:#4f9d69; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; padding:24px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:1.8rem; letter-spacing:.5px; }
+  h1 span { color:var(--accent); }
+  .sub { color:var(--muted); margin-top:8px; line-height:1.6; }
+  .card { background:var(--card); border-radius:12px; padding:20px; margin-top:24px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+  .tile { background:var(--bg); border-radius:10px; padding:14px; }
+  .tile .k { color:var(--muted); font-size:.75rem; text-transform:uppercase; letter-spacing:1px; }
+  .tile .v { font-size:1.4rem; font-weight:700; margin-top:4px; }
+  .badge { display:inline-block; margin-top:24px; padding:6px 14px; border:1px solid var(--accent);
+           border-radius:999px; color:var(--accent); font-size:.8rem; }
+  footer { margin-top:32px; color:var(--muted); font-size:.8rem; line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Jerebu<span>Watch</span> 🌫️</h1>
+  <p class="sub">Malaysia's air quality, translated: what the air is doing, why, and what to do about it. BM + EN, built for the 2026 haze season.</p>
+
+  <div class="card">
+    <div class="badge">Phase 0 — pipeline alive ✅ · dashboard in construction</div>
+    <div class="grid">
+      <div class="tile"><div class="k">Data pipeline</div><div class="v" id="status">…</div></div>
+      <div class="tile"><div class="k">Last refresh</div><div class="v" id="refresh" style="font-size:1rem">…</div></div>
+      <div class="tile"><div class="k">Locations tracked</div><div class="v" id="count">…</div></div>
+      <div class="tile"><div class="k">Worst API now</div><div class="v" id="worst">…</div></div>
+    </div>
+  </div>
+
+  <footer>
+    Data: Open-Meteo Air Quality API (modelled) · Official APIMS/DOE readings planned · Source attribution CC BY 4.0.<br>
+    Built by Amalin Hawa · <a href="https://github.com/" style="color:var(--accent)">GitHub</a> · Full methodology coming with MVP launch.
+  </footer>
+</div>
+<script>
+fetch("data/latest.json").then(r => r.json()).then(d => {
+  document.getElementById("status").textContent = "LIVE";
+  document.getElementById("refresh").textContent = d.generated_at.replace("T"," ").slice(0,16) + " MYT";
+  document.getElementById("count").textContent = d.locations.length;
+  const worst = d.locations.reduce((a,b) => (b.api_now||0) > (a.api_now||0) ? b : a, d.locations[0]);
+  document.getElementById("worst").textContent = worst.name + " · " + worst.api_now;
+}).catch(() => {
+  document.getElementById("status").textContent = "no data yet";
+});
+</script>
+</body>
+</html>
