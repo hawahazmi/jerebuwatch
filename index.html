@@ -4,53 +4,175 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JerebuWatch — Malaysia Air Quality</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  :root { --bg:#14161c; --card:#1e222b; --text:#e8e8ec; --muted:#9aa0ab; --accent:#4f9d69; }
+  :root { --bg:#14161c; --card:#1e222b; --card2:#232834; --text:#e8e8ec; --muted:#9aa0ab; --accent:#4f9d69; }
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; padding:24px; }
-  .wrap { max-width:640px; margin:0 auto; }
-  h1 { font-size:1.8rem; letter-spacing:.5px; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 40px; }
+  header { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; margin-bottom:4px; }
+  h1 { font-size:1.7rem; letter-spacing:.5px; }
   h1 span { color:var(--accent); }
-  .sub { color:var(--muted); margin-top:8px; line-height:1.6; }
-  .card { background:var(--card); border-radius:12px; padding:20px; margin-top:24px; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
-  .tile { background:var(--bg); border-radius:10px; padding:14px; }
-  .tile .k { color:var(--muted); font-size:.75rem; text-transform:uppercase; letter-spacing:1px; }
-  .tile .v { font-size:1.4rem; font-weight:700; margin-top:4px; }
-  .badge { display:inline-block; margin-top:24px; padding:6px 14px; border:1px solid var(--accent);
-           border-radius:999px; color:var(--accent); font-size:.8rem; }
-  footer { margin-top:32px; color:var(--muted); font-size:.8rem; line-height:1.7; }
+  .sub { color:var(--muted); font-size:.9rem; line-height:1.6; margin-bottom:16px; }
+  .updated { color:var(--muted); font-size:.78rem; }
+
+  #alert-banner { border-radius:10px; padding:10px 14px; font-size:.88rem; margin-bottom:14px; display:none; }
+
+  .layout { display:flex; gap:16px; flex-direction:column; }
+  @media (min-width: 860px) { .layout { flex-direction:row; } .map-col { flex:2; } .side-col { flex:1; min-width:300px; } }
+
+  #map { height:480px; border-radius:12px; border:1px solid #2a2e38; }
+  .map-col { display:flex; flex-direction:column; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .legend .chip { display:flex; align-items:center; gap:6px; font-size:.74rem; color:var(--muted); background:var(--card); padding:4px 10px; border-radius:999px; }
+  .legend .dot { width:10px; height:10px; border-radius:50%; }
+
+  .card { background:var(--card); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); margin-bottom:12px; }
+  .rank-row { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; cursor:pointer; }
+  .rank-row:hover { background:var(--card2); }
+  .rank-row .dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+  .rank-row .name { flex:1; font-size:.9rem; }
+  .rank-row .state { color:var(--muted); font-size:.72rem; }
+  .rank-row .api { font-weight:700; font-size:1rem; min-width:40px; text-align:right; }
+
+  .guidance { font-size:.85rem; line-height:1.7; color:var(--text); }
+  .guidance b { color:var(--accent); }
+  footer { margin-top:24px; color:var(--muted); font-size:.76rem; line-height:1.7; }
+  footer a { color:var(--accent); }
+
+  .leaflet-popup-content-wrapper { background:var(--card); color:var(--text); border-radius:10px; }
+  .leaflet-popup-tip { background:var(--card); }
+  .pop-name { font-weight:700; font-size:1rem; }
+  .pop-status { font-size:.82rem; margin-top:2px; }
+  .pop-nums { font-size:.8rem; color:var(--muted); margin-top:6px; line-height:1.5; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Jerebu<span>Watch</span> 🌫️</h1>
-  <p class="sub">Malaysia's air quality, translated: what the air is doing, why, and what to do about it. BM + EN, built for the 2026 haze season.</p>
+  <header>
+    <h1>Jerebu<span>Watch</span> 🌫️</h1>
+    <div class="updated" id="updated">loading…</div>
+  </header>
+  <p class="sub">Malaysia's air quality, translated — what the air is doing, why, and what to do about it. Data refreshes automatically every morning.</p>
 
-  <div class="card">
-    <div class="badge">Phase 0 — pipeline alive ✅ · dashboard in construction</div>
-    <div class="grid">
-      <div class="tile"><div class="k">Data pipeline</div><div class="v" id="status">…</div></div>
-      <div class="tile"><div class="k">Last refresh</div><div class="v" id="refresh" style="font-size:1rem">…</div></div>
-      <div class="tile"><div class="k">Locations tracked</div><div class="v" id="count">…</div></div>
-      <div class="tile"><div class="k">Worst API now</div><div class="v" id="worst">…</div></div>
+  <div id="alert-banner"></div>
+
+  <div class="layout">
+    <div class="map-col">
+      <div id="map"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="side-col">
+      <div class="card">
+        <h2>Right now — ranked by API</h2>
+        <div id="rank-list"></div>
+      </div>
+      <div class="card guidance">
+        <h2>Today's guidance</h2>
+        <div id="guidance">Loading…</div>
+      </div>
     </div>
   </div>
 
   <footer>
-    Data: Open-Meteo Air Quality API (modelled) · Official APIMS/DOE readings planned · Source attribution CC BY 4.0.<br>
-    Built by Amalin Hawa · <a href="https://github.com/" style="color:var(--accent)">GitHub</a> · Full methodology coming with MVP launch.
+    Air quality data: Open-Meteo Air Quality API (modelled estimates; official APIMS/DOE readings planned). API values approximated from PM2.5 — see methodology (coming with MVP). Source data licensed CC BY 4.0.<br>
+    Built by Amalin Hawa · <a href="https://github.com/hawahazmi/jerebuwatch">GitHub</a> · Updates daily at 6 AM MYT.
   </footer>
 </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+const BANDS = [
+  { max: 50,       en: "Good",               bm: "Baik",                 color: "#4caf50" },
+  { max: 100,      en: "Moderate",           bm: "Sederhana",            color: "#ffc107" },
+  { max: 200,      en: "Unhealthy",          bm: "Tidak Sihat",          color: "#ff7043" },
+  { max: 300,      en: "Very Unhealthy",     bm: "Sangat Tidak Sihat",   color: "#e53935" },
+  { max: Infinity, en: "Hazardous",          bm: "Berbahaya",            color: "#8e24aa" },
+];
+
+const map = L.map("map", { scrollWheelZoom: true }).setView([3.6, 109.5], 6);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 18
+}).addTo(map);
+
+// legend
+const legendEl = document.getElementById("legend");
+BANDS.forEach(b => {
+  const label = b.max === Infinity ? "> 300" : `≤ ${b.max}`;
+  legendEl.insertAdjacentHTML("beforeend",
+    `<span class="chip"><span class="dot" style="background:${b.color}"></span>${label} ${b.en}</span>`);
+});
+
+const markers = {};
+
+function bandOf(api) { return BANDS.find(b => api <= b.max) || BANDS[BANDS.length - 1]; }
+
+function popupHtml(loc) {
+  const b = bandOf(loc.api_now);
+  return `<div class="pop-name">${loc.name}</div>
+    <div class="pop-status" style="color:${b.color}">API ${loc.api_now} — ${b.en} · ${b.bm}</div>
+    <div class="pop-nums">PM2.5: ${loc.pm25_now ?? "–"} µg/m³<br>PM10: ${loc.pm10_now ?? "–"} µg/m³</div>`;
+}
+
 fetch("data/latest.json").then(r => r.json()).then(d => {
-  document.getElementById("status").textContent = "LIVE";
-  document.getElementById("refresh").textContent = d.generated_at.replace("T"," ").slice(0,16) + " MYT";
-  document.getElementById("count").textContent = d.locations.length;
-  const worst = d.locations.reduce((a,b) => (b.api_now||0) > (a.api_now||0) ? b : a, d.locations[0]);
-  document.getElementById("worst").textContent = worst.name + " · " + worst.api_now;
+  document.getElementById("updated").textContent =
+    "Last updated: " + d.generated_at.replace("T", " ").slice(0, 16) + " MYT";
+
+  const locs = d.locations.filter(l => l.api_now != null)
+                          .sort((a, b) => b.api_now - a.api_now);
+
+  // markers
+  locs.forEach(loc => {
+    const b = bandOf(loc.api_now);
+    const radius = Math.min(8 + loc.api_now / 18, 26);
+    const m = L.circleMarker([loc.lat, loc.lon], {
+      radius, color: b.color, weight: 2, fillColor: b.color, fillOpacity: 0.45
+    }).addTo(map);
+    m.bindPopup(popupHtml(loc));
+    markers[loc.name] = m;
+  });
+
+  // alert banner if anything is Very Unhealthy+
+  const worst = locs[0];
+  const wb = bandOf(worst.api_now);
+  if (worst.api_now > 200) {
+    const banner = document.getElementById("alert-banner");
+    banner.style.display = "block";
+    banner.style.background = wb.color + "22";
+    banner.style.border = `1px solid ${wb.color}`;
+    banner.innerHTML = `⚠️ <b>${worst.name}</b> is at API ${worst.api_now} (${wb.en} / ${wb.bm}) — the worst in Malaysia right now. Limit outdoor activity${worst.api_now > 300 ? "; stay indoors where possible" : ""}.`;
+  }
+
+  // ranked list
+  const list = document.getElementById("rank-list");
+  locs.forEach(loc => {
+    const b = bandOf(loc.api_now);
+    const row = document.createElement("div");
+    row.className = "rank-row";
+    row.innerHTML = `<span class="dot" style="background:${b.color}"></span>
+      <span class="name">${loc.name}<br><span class="state">${loc.state}</span></span>
+      <span class="api" style="color:${b.color}">${loc.api_now}</span>`;
+    row.onclick = () => { map.setView([loc.lat, loc.lon], 10); markers[loc.name].openPopup(); };
+    list.appendChild(row);
+  });
+
+  // guidance based on national worst + Klang Valley average
+  const kv = locs.filter(l => l.state === "Selangor" || l.state === "Kuala Lumpur");
+  const kvAvg = Math.round(kv.reduce((s, l) => s + l.api_now, 0) / Math.max(kv.length, 1));
+  const gb = bandOf(kvAvg);
+  const advice = {
+    "Good": "Air is clean. Great day to be outside — no restrictions needed.",
+    "Moderate": "Acceptable air. Unusually sensitive people should consider lighter outdoor activity.",
+    "Unhealthy": "Sensitive groups: reduce prolonged outdoor exertion. Everyone else: pace yourself, hydrate.",
+    "Very Unhealthy": "Avoid outdoor exercise. Wear an N95 outdoors if you must. Keep windows closed.",
+    "Hazardous": "Stay indoors. N95 if you must step out. Seek medical help for breathing difficulty.",
+  };
+  document.getElementById("guidance").innerHTML =
+    `Klang Valley average: <b style="color:${gb.color}">API ${kvAvg} (${gb.en} / ${gb.bm})</b><br>${advice[gb.en]}` +
+    `<br><br><span style="color:var(--muted)">Worst nationwide: <b style="color:${wb.color}">${worst.name} — ${worst.api_now}</b></span>`;
 }).catch(() => {
-  document.getElementById("status").textContent = "no data yet";
+  document.getElementById("updated").textContent = "Data unavailable — check back after 6 AM MYT refresh.";
 });
 </script>
 </body>
