@@ -1,13 +1,14 @@
 """
-JerebuWatch data pipeline — Phase 0
+JerebuWatch data pipeline — Phase 0/1
 Fetches hourly air quality (PM10, PM2.5) for key Malaysian locations from
 Open-Meteo Air Quality API (free, no key required) and writes:
-  - data/latest.json        : current snapshot for the dashboard
-  - data/history/YYYY-MM-DD.json : daily archive for trend building
+  - data/latest.json        : current snapshot + last 24h (dashboard map)
+  - data/trends.json        : 30-day hourly series (drill-down charts)
+  - data/history/YYYY-MM-DD.json : daily archive of the current snapshot
 
 Stdlib only (urllib) so it runs anywhere: local Windows, GitHub Actions.
-AQI mapping uses the Malaysian API thresholds (DOE/APIMS):
-  0-50 Good | 51-100 Moderate | 101-200 Unhealthy | 201-300 Very Unhealthy | >300 Hazardous
+AQI calculation: piecewise-linear conversion of PM2.5 using the US-AQI/PSI
+breakpoints that Malaysian API is derived from (documented in methodology).
 """
 
 import json
@@ -42,12 +43,31 @@ API_BANDS = [
     (float("inf"), "Hazardous", "Berbahaya", "#8e24aa"),
 ]
 
+# US-AQI / PSI PM2.5 breakpoints: (conc_lo, conc_hi, aqi_lo, aqi_hi)
+# Malaysian API is PSI-derived; this is the standard defensible conversion.
+PM25_BREAKPOINTS = [
+    (0.0, 12.0, 0, 50),
+    (12.1, 35.4, 51, 100),
+    (35.5, 55.4, 101, 150),
+    (55.5, 150.4, 151, 200),
+    (150.5, 250.4, 201, 300),
+    (250.5, 350.4, 301, 400),
+    (350.5, 500.4, 401, 500),
+]
+
 
 def api_from_pm25(pm25):
-    """Approximate Malaysian API value from PM2.5 (dominant haze pollutant)."""
+    """Convert PM2.5 (µg/m³) to an API-equivalent value via AQI breakpoints."""
     if pm25 is None:
         return None
-    return round(pm25 * 2.0)  # coarse mapping; methodology page will document this
+    if pm25 <= 0:
+        return 0
+    if pm25 > 500.4:
+        return 500
+    for clo, chi, alo, ahi in PM25_BREAKPOINTS:
+        if clo <= pm25 <= chi:
+            return round(alo + (ahi - alo) * (pm25 - clo) / (chi - clo))
+    return 500
 
 
 def classify(api_value):
@@ -63,12 +83,12 @@ def fetch_location(loc):
         "longitude": loc["lon"],
         "hourly": "pm10,pm2_5",
         "forecast_days": 1,
-        "past_days": 7,   # 7 days back for trend context
+        "past_days": 30,  # 30 days back for trend charts
         "timezone": "Asia/Kuala_Lumpur",
     }
     url = f"{BASE}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "JerebuWatch/0.1"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    req = urllib.request.Request(url, headers={"User-Agent": "JerebuWatch/0.2"})
+    with urllib.request.urlopen(req, timeout=45) as resp:
         data = json.loads(resp.read().decode("utf-8"))
 
     hourly = data.get("hourly", {})
@@ -83,16 +103,35 @@ def fetch_location(loc):
     pm10_now = pm10_series[current_idx] if current_idx < len(pm10_series) else None
     api_now = api_from_pm25(pm25_now)
 
+    # Rolling averages for trend narrative (last 24h vs previous 30 days)
+    valid_30d = [v for v in pm25_series[: current_idx + 1] if v is not None]
+    last24 = valid_30d[-24:]
+    before = valid_30d[:-24] if len(valid_30d) > 24 else []
+    avg_last24 = round(sum(last24) / len(last24), 1) if last24 else None
+    avg_30d = round(sum(valid_30d) / len(valid_30d), 1) if valid_30d else None
+
+    # Full series with per-hour API for trends.json
+    full_series = [
+        {
+            "time": t,
+            "pm25": pm25_series[i],
+            "pm10": pm10_series[i],
+            "api": api_from_pm25(pm25_series[i]),
+        }
+        for i, t in enumerate(times)
+    ]
+
     return {
         **loc,
         "pm25_now": pm25_now,
         "pm10_now": pm10_now,
         "api_now": api_now,
         "status": classify(api_now) if api_now is not None else None,
-        "hourly": [
-            {"time": t, "pm25": pm25_series[i], "pm10": pm10_series[i]}
-            for i, t in enumerate(times)
-        ],
+        "pm25_avg_last24h": avg_last24,
+        "pm25_avg_30d": avg_30d,
+        # last 24h for map popups; full 30d goes to trends.json separately
+        "hourly": [r for r in full_series if r["time"] >= times[max(current_idx - 23, 0)]],
+        "series_30d": full_series,
     }
 
 
@@ -120,12 +159,30 @@ def main():
         "errors": errors,
     }
 
-    latest_path = data_dir / "latest.json"
-    today_path = history_dir / f"{datetime.now(MYT).strftime('%Y-%m-%d')}.json"
-    for path in (latest_path, today_path):
-        path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Slim trends file for drill-down charts (no duplicates of latest.json fields)
+    trends = {
+        "generated_at": fetched_at,
+        "locations": [
+            {
+                "name": r["name"],
+                "state": r["state"],
+                "series": [
+                    {"t": p["time"], "api": p["api"], "pm25": p["pm25"], "pm10": p["pm10"]}
+                    for p in r["series_30d"]
+                ],
+            }
+            for r in results
+        ],
+    }
 
-    print(f"\nWrote {latest_path} and {today_path}")
+    latest_path = data_dir / "latest.json"
+    trends_path = data_dir / "trends.json"
+    today_path = history_dir / f"{datetime.now(MYT).strftime('%Y-%m-%d')}.json"
+    latest_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    trends_path.write_text(json.dumps(trends, ensure_ascii=False), encoding="utf-8")
+    today_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print(f"\nWrote {latest_path.name}, {trends_path.name}, {today_path.name}")
     print(f"{len(results)}/{len(LOCATIONS)} locations fetched, {len(errors)} errors")
     return 0 if results else 1
 

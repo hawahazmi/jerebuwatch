@@ -46,6 +46,16 @@
   .pop-name { font-weight:700; font-size:1rem; }
   .pop-status { font-size:.82rem; margin-top:2px; }
   .pop-nums { font-size:.8rem; color:var(--muted); margin-top:6px; line-height:1.5; }
+
+  .trend-controls { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+  #trend-city { background:var(--card2); color:var(--text); border:1px solid #2f3542;
+                border-radius:8px; padding:8px 12px; font-size:.88rem; }
+  .range-btns { display:flex; gap:6px; }
+  .rbtn { background:var(--card2); color:var(--muted); border:1px solid #2f3542; border-radius:8px;
+          padding:7px 14px; font-size:.8rem; cursor:pointer; }
+  .rbtn.active { color:var(--text); border-color:var(--accent); }
+  .trend-note { font-size:.82rem; color:var(--muted); margin-top:8px; line-height:1.6; }
+  .trend-note b { color:var(--text); }
 </style>
 </head>
 <body>
@@ -57,6 +67,19 @@
   <p class="sub">Malaysia's air quality, translated — what the air is doing, why, and what to do about it. Data refreshes automatically every morning.</p>
 
   <div id="alert-banner"></div>
+
+  <div class="card" id="trend-card">
+    <h2>30-day trend drill-down</h2>
+    <div class="trend-controls">
+      <select id="trend-city"></select>
+      <div class="range-btns">
+        <button class="rbtn" data-days="7">7D</button>
+        <button class="rbtn active" data-days="30">30D</button>
+      </div>
+    </div>
+    <div id="trend-chart" style="width:100%;height:340px;"></div>
+    <div class="trend-note" id="trend-note"></div>
+  </div>
 
   <div class="layout">
     <div class="map-col">
@@ -82,6 +105,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <script>
 const BANDS = [
   { max: 50,       en: "Good",               bm: "Baik",                 color: "#4caf50" },
@@ -173,6 +197,81 @@ fetch("data/latest.json").then(r => r.json()).then(d => {
     `<br><br><span style="color:var(--muted)">Worst nationwide: <b style="color:${wb.color}">${worst.name} — ${worst.api_now}</b></span>`;
 }).catch(() => {
   document.getElementById("updated").textContent = "Data unavailable — check back after 6 AM MYT refresh.";
+});
+
+// ---------------- 30-day trend drill-down (ECharts) ----------------
+let trendData = null;
+let trendChart = null;
+let currentCity = "Kuala Lumpur";
+let currentDays = 30;
+
+const API_MARKS = [
+  { yAxis: 50 }, { yAxis: 100 }, { yAxis: 200 }, { yAxis: 300 },
+];
+const API_COLORS = ["#4caf50", "#ffc107", "#ff7043", "#e53935", "#8e24aa"];
+
+function renderTrend() {
+  if (!trendData) return;
+  const loc = trendData.locations.find(l => l.name === currentCity);
+  if (!loc) return;
+
+  const cutoff = currentDays * 24;
+  const pts = loc.series.slice(-cutoff);
+  const times = pts.map(p => p.t.replace("T", " ").slice(5, 16));
+  const apis = pts.map(p => p.api);
+
+  if (!trendChart) trendChart = echarts.init(document.getElementById("trend-chart"), "dark");
+  trendChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: { trigger: "axis" },
+    grid: { left: 48, right: 18, top: 24, bottom: 40 },
+    xAxis: { type: "category", data: times, axisLabel: { fontSize: 10 }, boundaryGap: false },
+    yAxis: { type: "value", name: "API", axisLabel: { fontSize: 10 } },
+    dataZoom: [{ type: "inside" }],
+    series: [{
+      name: "API", type: "line", data: apis, smooth: true, showSymbol: false,
+      lineStyle: { width: 2, color: "#4f9d69" },
+      areaStyle: { color: "rgba(79,157,105,0.15)" },
+      markLine: {
+        silent: true, symbol: "none",
+        lineStyle: { type: "dashed", color: "#555" },
+        label: { fontSize: 9, color: "#9aa0ab", position: "insideEndTop" },
+        data: API_MARKS,
+      },
+    }],
+  }, true);
+
+  // narrative: peak, current, avg
+  const peak = Math.max(...apis);
+  const now = apis[apis.length - 1];
+  const avg = Math.round(apis.reduce((a, b) => a + (b || 0), 0) / apis.filter(Boolean).length);
+  document.getElementById("trend-note").innerHTML =
+    `<b>${currentCity}</b> — last ${currentDays} days: peak <b>${peak}</b>, now <b>${now}</b>, average <b>${avg}</b>. ` +
+    (peak >= 200 ? "This area crossed into <b style='color:#ff7043'>Unhealthy</b> territory during the window shown." : "Readings stayed below the Unhealthy threshold in this window.");
+}
+
+fetch("data/trends.json").then(r => r.json()).then(d => {
+  trendData = d;
+  const sel = document.getElementById("trend-city");
+  d.locations.forEach(l => {
+    const opt = document.createElement("option");
+    opt.value = opt.textContent = l.name;
+    sel.appendChild(opt);
+  });
+  sel.value = currentCity;
+  sel.onchange = () => { currentCity = sel.value; renderTrend(); };
+  document.querySelectorAll(".rbtn").forEach(b => {
+    b.onclick = () => {
+      currentDays = +b.dataset.days;
+      document.querySelectorAll(".rbtn").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      renderTrend();
+    };
+  });
+  renderTrend();
+  window.addEventListener("resize", () => trendChart && trendChart.resize());
+}).catch(() => {
+  document.getElementById("trend-note").textContent = "Trend data unavailable.";
 });
 </script>
 </body>
